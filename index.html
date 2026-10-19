@@ -328,7 +328,7 @@ footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);
 <div class="campuses" id="view"></div>
 
 <footer>
-  <span>개인 진도율 = Σ(비중 × 달성률) ÷ Σ비중 − 가드레일 차감 · 팀 = 구성원 평균 · 0~120%</span>
+  <span>개인 = Σ(비중 × 달성률) ÷ 전체 비중 − 가드레일 차감 · 팀 = 전 구성원 평균 · 전사 = 전 팀 평균 · 미입력은 0%</span>
   <span id="panelInfo"></span>
   <span id="asOf"></span>
 </footer>
@@ -439,12 +439,16 @@ function formulaText(r){
    개인 진도율 = Σ(비중 × 달성률) ÷ Σ(실적 있는 항목의 비중) + 가드레일 차감 (0~120)
    팀 진도율   = 구성원 개인 진도율의 평균
    팀 KPI 진도율 = 그 팀 KPI 에 연결된(상위 팀KPI) 개인 KPI 달성률의 평균 — 자동 롤업 */
+/* 진도율 = 전체 목표 중 어디까지 왔나. 실적이 없는 항목·사람·팀은 0%로 분모에 들어간다.
+   (실적 있는 것만 평균 내면 한 팀만 입력해도 전사가 100%를 넘는다.)
+   아무도 입력하지 않았으면 null — 화면에 '—'/'미기재'로 표시 */
+const avgAll = xs => xs.length && xs.some(x=>x!==null) ? xs.reduce((a,x)=>a+(x??0),0)/xs.length : null;
 function personRate(rows){
-  const w = rows.filter(r=>!isGuard(r) && numRate(r.rate)!==null);
+  const w = rows.filter(r=>!isGuard(r));
   const ws = w.reduce((s,r)=>s+(Number(r.weight)||0),0);
-  if(!ws) return null;
+  if(!ws || !rows.some(r=>numRate(r.rate)!==null)) return null;
   const g = rows.filter(isGuard).reduce((s,r)=>s+(numRate(r.rate)||0),0);
-  return Math.max(0, Math.min(120, w.reduce((s,r)=>s+(Number(r.weight)||0)*r.rate,0)/ws + g));
+  return Math.max(0, Math.min(120, w.reduce((s,r)=>s+(Number(r.weight)||0)*(numRate(r.rate)??0),0)/ws + g));
 }
 function teamStats(team){
   const rows = state.data.rows.filter(r=>r.team===team);
@@ -464,8 +468,7 @@ function teamStats(team){
     t.rate = !sc.length ? null : isGuard(t) ? sc.reduce((a,p)=>a+p.rate,0)
                                            : sc.reduce((a,p)=>a+p.rate,0)/sc.length;
   });
-  const rp = people.filter(p=>p.rate!==null);
-  const rate = rp.length ? rp.reduce((a,p)=>a+p.rate,0)/rp.length : null;
+  const rate = avgAll(people.map(p=>p.rate));
   const blank = pRows.filter(r=>numRate(r.rate)===null).length;
   const wBad = people.filter(p=>Math.round(p.wsum)!==100).length;
   return {team, tRows, pRows, people, rate, blank, wBad, written: pRows.length>0};
@@ -501,7 +504,7 @@ function moneyCard(m, hero){
 }
 function renderTotal(S){
   const sc=S.filter(s=>s.rate!==null);
-  const head=sc.length?sc.reduce((a,s)=>a+s.rate,0)/sc.length:null;
+  const head=avgAll(S.map(s=>s.rate));
   const all=state.data.rows.filter(r=>r.level==="개인");
   const filled=all.filter(r=>numRate(r.rate)!==null).length;
   const inRate=all.length?filled/all.length*100:null;
@@ -576,7 +579,6 @@ function rateAt(r, w){
   const c=rateOf({...r, actual:a, sheetRate:undefined});
   return typeof c==="number" ? c : null;
 }
-const avgOf = xs => { const v=xs.filter(x=>x!==null); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null; };
 function weekSeries(){
   const pRows=state.data.rows.filter(r=>r.level==="개인" && r.name);
   const last=Math.max(-1, ...pRows.map(r=>(r.weeks||[]).reduce((m,v,i)=>v!=null?i:m,-1)));
@@ -585,12 +587,11 @@ function weekSeries(){
     const people={};
     pRows.forEach(r=>{ (people[r.team+"|"+r.owner] ??= []).push({...r, rate:rateAt(r,w)}); });
     const teamRate={};
-    Object.values(people).forEach(rs=>{ const pr=personRate(rs);
-      if(pr!==null) (teamRate[rs[0].team] ??= []).push(pr); });
-    const team={}; Object.keys(teamRate).forEach(t=>team[t]=avgOf(teamRate[t]));
+    Object.values(people).forEach(rs=>(teamRate[rs[0].team] ??= []).push(personRate(rs)));
+    const team={}; Object.keys(teamRate).forEach(t=>team[t]=avgAll(teamRate[t]));
     const group={}; CAMPUS_ORDER.forEach(c=>{
-      group[c]=avgOf(state.data.teams.filter(t=>t.campus===c).map(t=>team[t.team]??null)); });
-    out.push({w, label:WEEK_LABELS[w], all:avgOf(Object.values(team)), group, team});
+      group[c]=avgAll(state.data.teams.filter(t=>t.campus===c).map(t=>team[t.team]??null)); });
+    out.push({w, label:WEEK_LABELS[w], all:avgAll(state.data.teams.map(t=>team[t.team]??null)), group, team});
   }
   return out;
 }
@@ -636,7 +637,7 @@ function renderChart(){
         <line class="crosshair" y1="${T}" y2="${H-B}"/>${hits}</svg>
       <div class="charttip"></div></div>`
     :`<div class="chartcap" style="padding:28px 0;text-align:center">아직 입력된 주차 실적이 없습니다. 각 팀 탭의 주차 칸(11/2주~)에 실적을 넣으면 추이가 그려집니다.</div>`}
-    <div class="chartcap">각 주차 시점까지 입력된 마지막 실적 기준으로 다시 계산 · 개인(비중 가중) → 팀 평균 → 그룹·전사 평균</div>`;
+    <div class="chartcap">각 주차 시점까지 입력된 마지막 실적 기준으로 다시 계산 · 개인(비중 가중) → 팀 평균 → 그룹·전사 평균, 미입력은 0%</div>`;
   el.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{ state.chartMode=b.dataset.mode; renderChart(); });
   const svg=el.querySelector("svg"), tip=el.querySelector(".charttip"), ch=el.querySelector(".crosshair");
   if(!svg) return;
@@ -715,8 +716,7 @@ function render(){
   renderChart();
   document.getElementById("view").innerHTML = CAMPUS_ORDER.map(c=>{
     const g=S.filter(s=>s.campus===c);
-    const gs=g.filter(s=>s.rate!==null);
-    const avg=gs.length?gs.reduce((a,s)=>a+s.rate,0)/gs.length:null;
+    const avg=avgAll(g.map(s=>s.rate));
     const ab=band(avg);
     g.sort((a,b)=>(b.written?1:0)-(a.written?1:0) || (b.rate??-1)-(a.rate??-1)
                   || a.team.localeCompare(b.team,"ko"));
@@ -782,7 +782,7 @@ function panelBody(r){
         ["비중 합계", Math.round(r.wsum)+"%"], ["실적 입력", r.rows.filter(x=>numRate(x.rate)!==null).length+"개"]]) +
       `<div class="msec">개인 KPI</div><div class="persons">${r.rows.map(kidRow).join("")}</div>
        <div class="msec">진도율 계산</div>
-       <div class="formula">Σ(비중 × 달성률) ÷ Σ(실적 있는 항목 비중) + 가드레일 차감</div>`;
+       <div class="formula">Σ(비중 × 달성률) ÷ 전체 비중 + 가드레일 차감 (미입력 항목은 0%)</div>`;
   }
   if(r.level==="팀"){
     const kids=state.data.rows.filter(p=>p.level==="개인"&&p.team===r.team&&(isG?isGuard(p):p.parentId===r.kpiId));
