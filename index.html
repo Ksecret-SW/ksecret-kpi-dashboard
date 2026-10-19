@@ -982,7 +982,7 @@ const tabUrl = (id,tab,range) =>
   `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&headers=1&sheet=${
     encodeURIComponent(tab)}&range=${range}`;
 async function fetchCsv(u){
-  const r=await fetch(u);
+  const r=await fetch(u+(u.includes("?")?"&":"?")+"_="+Date.now(), {cache:"no-store"});
   if(!r.ok) throw new Error("HTTP "+r.status);
   return r.text();
 }
@@ -1016,9 +1016,9 @@ async function loadSheet(){
   const id=(raw.match(/\/d\/([a-zA-Z0-9-_]{20,})/)||[,raw])[1];
   dot.className="dot busy"; txt.textContent="불러오는 중…"; btn.disabled=true;
   try{
+    const first=!state.loaded;
     state.data=await fromSheets(id);
-    closeAllPanels();
-    collapseAll();
+    if(first){ closeAllPanels(); collapseAll(); }
     dot.className="dot live";
     txt.textContent=`시트 연동 · 개인 KPI ${state.data.rows.filter(r=>r.level==="개인").length}개 · 팀 KPI ${
       state.data.rows.filter(r=>r.level==="팀").length}개`;
@@ -1051,6 +1051,9 @@ document.getElementById("sheetUrl").addEventListener("keydown",e=>{ if(e.key==="
   if(!src) return;
   document.getElementById("sheetUrl").value = src;
   loadSheet();
+  /* 노션에 띄워 둔 채 회의해도 최신값이 보이도록: 2분마다, 그리고 탭으로 돌아올 때 다시 읽는다 */
+  setInterval(()=>{ if(!document.hidden) loadSheet(); }, 120000);
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) loadSheet(); });
 })();
 document.getElementById("themeBtn").addEventListener("click",()=>{
   const r=document.documentElement;
